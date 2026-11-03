@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../data/models.dart';
 import '../viewmodels/teams_view.dart';
+import 'widgets/poke_widgets.dart';
 
 Future<String?> _askName(BuildContext context, [String initial = '']) {
   final c = TextEditingController(text: initial);
@@ -63,42 +64,21 @@ class TeamDetailPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final vm = context.watch<TeamsViewModel>();
     return Scaffold(
-      appBar: AppBar(title: Text(team.name), actions: [
-        IconButton(
-          icon: const Icon(Icons.edit),
-          onPressed: () async {
-            final name = await _askName(context, team.name);
-            if (name != null && name.isNotEmpty) vm.rename(team, name);
-          },
-        ),
-        IconButton(
-          icon: const Icon(Icons.delete),
-          onPressed: () async {
-            await vm.delete(team);
-            if (context.mounted) Navigator.pop(context);
-          },
+      floatingActionButton: FloatingActionButton(
+        onPressed: () async {
+          final name = await _askName(context);
+          if (name != null && name.isNotEmpty) vm.create(name);
+        },
+        child: const Icon(Icons.add),
+      ),
+      body: Column(children: [
+        const PokedexHeader(title: 'EQUIPOS'),
+        Expanded(
+          child: vm.teams.isEmpty
+              ? const Center(child: Text('Aún no tienes equipos'))
+              : ListView(children: [ /* ...tu lista actual, sin cambios... */ ]),
         ),
       ]),
-      body: GridView.count(
-        crossAxisCount: 3,
-        padding: const EdgeInsets.all(16),
-        mainAxisSpacing: 12,
-        crossAxisSpacing: 12,
-        children: [
-          for (var i = 0; i < Team.maxSize; i++)
-            i < team.pokemonIds.length
-                ? InkWell(
-                    onLongPress: () => vm.removeAt(team, i),
-                    child: Card(
-                        child: CachedNetworkImage(imageUrl: spriteUrl(team.pokemonIds[i]))),
-                  )
-                : const Card(child: Icon(Icons.catching_pokemon, color: Colors.grey)),
-        ],
-      ),
-      bottomNavigationBar: const Padding(
-        padding: EdgeInsets.all(12),
-        child: Text('Mantén pulsado un Pokémon para quitarlo.', textAlign: TextAlign.center),
-      ),
     );
   }
 }
