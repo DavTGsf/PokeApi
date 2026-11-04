@@ -5,6 +5,10 @@ import 'data/repositorio.dart';
 import 'ui/home_page.dart';
 import 'viewmodels/poke_view.dart';
 import 'viewmodels/teams_view.dart';
+import 'ui/theme/app_theme.dart';
+
+// ...
+
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -27,7 +31,8 @@ class PokeApi extends StatelessWidget {
       ],
       child: MaterialApp(
         title: 'PokéDex',
-        theme: ThemeData(colorSchemeSeed: const Color(0xFFDC0A2D), useMaterial3: true),
+        debugShowCheckedModeBanner: false,
+        theme: buildTheme(), // ← antes: ThemeData(colorSchemeSeed: ...)
         home: const HomePage(),
       ),
     );

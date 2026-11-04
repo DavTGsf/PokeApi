@@ -10,7 +10,7 @@ import 'widgets/poke_widgets.dart';
 
 class DetailPage extends StatefulWidget {
   const DetailPage({super.key, required this.id});
-  final int id;
+  final int id; // id de /pokemon: especie (1-1025) o forma (>= 10000, p. ej. una mega)
   @override
   State<DetailPage> createState() => _DetailPageState();
 }
@@ -19,8 +19,9 @@ class _DetailPageState extends State<DetailPage> {
   static const _maxId = 1025;
   final _player = AudioPlayer();
 
-  late int _id = widget.id;
-  PokemonDetail? _detail;
+  late int _id = widget.id; // número nacional (especie)
+  PokemonDetail? _detail;   // forma mostrada (normal o mega)
+  PokemonSpecies? _species;
   Object? _error;
   int _dir = 1; // dirección de la transición: 1 siguiente, -1 anterior
   bool _busy = false; // evita peticiones duplicadas al pulsar rápido
@@ -41,12 +42,15 @@ class _DetailPageState extends State<DetailPage> {
     if (_busy) return;
     _busy = true;
     try {
-      final d = await context.read<PokemonRepository>().getDetail(target);
+      final repo = context.read<PokemonRepository>();
+      final d = await repo.getDetail(target);
+      final s = await repo.getSpecies(d.speciesId);
       if (!mounted) return;
       setState(() {
-        _dir = target >= _id ? 1 : -1;
-        _id = target;
+        _dir = s.id >= _id ? 1 : -1;
+        _id = s.id;
         _detail = d;
+        _species = s;
         _error = null;
       });
     } catch (e) {
@@ -90,15 +94,24 @@ class _DetailPageState extends State<DetailPage> {
 
   @override
   Widget build(BuildContext context) {
-    final d = _detail;
+    final d = _detail, s = _species;
     return Scaffold(
-      body: Column(children: [
-        PokedexHeader(
-          title: dex(_id),
-          leading: RoundIconButton(icon: Icons.arrow_back, onTap: () => Navigator.pop(context)),
-        ),
-        Expanded(child: d == null ? _loadingOrError() : _animated(d)),
-      ]),
+      backgroundColor: AppColors.red,
+      body: SafeArea(
+        bottom: false,
+        child: Column(children: [
+          PokedexTopBar(
+            title: 'POKÉDEX',
+            leading: RoundIconButton(icon: Icons.arrow_back, onTap: () => Navigator.pop(context)),
+          ),
+          Expanded(
+            child: ScreenBezel(
+              child: d == null || s == null ? _loadingOrError() : _animated(d, s),
+            ),
+          ),
+          const BottomGrill(),
+        ]),
+      ),
     );
   }
 
@@ -114,14 +127,14 @@ class _DetailPageState extends State<DetailPage> {
             : const CircularProgressIndicator(),
       );
 
-  Widget _animated(PokemonDetail d) => AnimatedSwitcher(
+  Widget _animated(PokemonDetail d, PokemonSpecies s) => AnimatedSwitcher(
         duration: kMedium,
         layoutBuilder: (current, previous) => Stack(
           fit: StackFit.expand,
-          children: [...previous, if (current != null) current],
+          children: [...previous, ?current],
         ),
         transitionBuilder: (child, anim) {
-          final incoming = (child.key as ValueKey<int>).value == _id;
+          final incoming = (child.key as ValueKey<int>).value == _detail?.id;
           final dx = (incoming ? _dir : -_dir).toDouble() * 0.25;
           return FadeTransition(
             opacity: anim,
@@ -134,11 +147,13 @@ class _DetailPageState extends State<DetailPage> {
         child: _DetailBody(
           key: ValueKey(d.id),
           d: d,
+          s: s,
           isInitial: d.id == widget.id,
-          onPrev: d.id > 1 ? () => _load(d.id - 1) : null,
-          onNext: d.id < _maxId ? () => _load(d.id + 1) : null,
+          onPrev: _id > 1 ? () => _load(_id - 1) : null,
+          onNext: _id < _maxId ? () => _load(_id + 1) : null,
           onSound: d.cryUrl == null ? null : () => _player.play(UrlSource(d.cryUrl!)),
           onAdd: () => _addToTeam(d),
+          onForm: (f) => _load(f.id),
         ),
       );
 }
@@ -147,21 +162,25 @@ class _DetailBody extends StatelessWidget {
   const _DetailBody({
     super.key,
     required this.d,
+    required this.s,
     required this.isInitial,
     required this.onPrev,
     required this.onNext,
     required this.onSound,
     required this.onAdd,
+    required this.onForm,
   });
   final PokemonDetail d;
+  final PokemonSpecies s;
   final bool isInitial;
   final VoidCallback? onPrev, onNext, onSound;
   final VoidCallback onAdd;
+  final ValueChanged<PokemonForm> onForm;
 
   @override
   Widget build(BuildContext context) {
     final color = typeColor(d.types.first);
-    return ListView(padding: const EdgeInsets.fromLTRB(16, 16, 16, 24), children: [
+    return ListView(padding: const EdgeInsets.fromLTRB(12, 12, 12, 20), children: [
       _ArtPanel(
         d: d,
         color: color,
@@ -171,12 +190,16 @@ class _DetailBody extends StatelessWidget {
         onSound: onSound,
         onAdd: onAdd,
       ),
-      const SizedBox(height: 16),
-      _Panel(child: _Info(d)),
+      if (s.forms.length > 1) ...[
+        const SizedBox(height: 12),
+        _FormSelector(forms: s.forms, currentId: d.id, onSelect: onForm),
+      ],
+      const SizedBox(height: 12),
+      _InfoCard(d: d, s: s),
       const SizedBox(height: 12),
       _Panel(child: _Stats(d, color)),
       const SizedBox(height: 12),
-      _Panel(child: _Evolution(d.id)),
+      _Panel(child: _Evolution(d.speciesId)),
     ]);
   }
 }
@@ -198,14 +221,16 @@ class _ArtPanel extends StatelessWidget {
   final VoidCallback onAdd;
 
   Widget _art() {
+    // Sprite pixelado ampliado sin suavizado (como la referencia);
+    // si no existe (algunas formas nuevas), se usa el artwork oficial.
     final img = CachedNetworkImage(
-      imageUrl: artworkUrl(d.id),
+      imageUrl: spriteUrl(d.id),
+      filterQuality: FilterQuality.none,
       fit: BoxFit.contain,
-      placeholder: (_, __) => CachedNetworkImage(
-        imageUrl: spriteUrl(d.id),
-        filterQuality: FilterQuality.none,
-        fit: BoxFit.contain,
-      ),
+      width: double.infinity,
+      height: double.infinity,
+      placeholder: (_, __) => const Center(child: PokeballIcon(size: 40)),
+      errorWidget: (_, __, ___) => CachedNetworkImage(imageUrl: artworkUrl(d.id), fit: BoxFit.contain),
     );
     return isInitial ? Hero(tag: 'poke-${d.id}', child: img) : img;
   }
@@ -225,39 +250,101 @@ class _ArtPanel extends StatelessWidget {
         : _art();
 
     return Container(
-      height: 290,
+      height: 280,
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(kRadius),
         border: Border.all(color: AppColors.ink, width: 3),
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [color.withValues(alpha: 0.6), color.withValues(alpha: 0.22)],
-        ),
+        gradient: typeGradient(color),
       ),
       child: Stack(children: [
-        Center(child: Icon(Icons.catching_pokemon, size: 230, color: Colors.white.withValues(alpha: 0.28))),
-        Center(child: Padding(padding: const EdgeInsets.all(28), child: art)),
+        const Positioned.fill(child: PixelGrid()),
+        Center(child: Icon(Icons.catching_pokemon, size: 240, color: Colors.white.withValues(alpha: 0.18))),
         Align(
-          alignment: Alignment.centerLeft,
-          child: Padding(
-            padding: const EdgeInsets.only(left: 8),
-            child: RoundIconButton(icon: Icons.chevron_left, onTap: onPrev),
+          alignment: const Alignment(0, 0.8),
+          child: Container(
+            width: 170,
+            height: 24,
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.2),
+              borderRadius: const BorderRadius.all(Radius.elliptical(85, 12)),
+            ),
           ),
         ),
-        Align(
-          alignment: Alignment.centerRight,
-          child: Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: RoundIconButton(icon: Icons.chevron_right, onTap: onNext),
-          ),
+        Positioned.fill(
+          child: Padding(padding: const EdgeInsets.fromLTRB(44, 36, 44, 24), child: art),
         ),
-        Positioned(left: 8, bottom: 8, child: RoundIconButton(icon: Icons.group_add, onTap: onAdd, color: AppColors.red, iconColor: AppColors.white)),
-        Positioned(right: 8, bottom: 8, child: RoundIconButton(icon: Icons.volume_up, onTap: onSound)),
+        if (d.isMega)
+          Positioned(
+            top: 16,
+            left: 0,
+            right: 0,
+            child: Center(child: MegaBadge(label: formLabel(d.name).toUpperCase())),
+          ),
+        Positioned(left: 10, top: 10, child: RoundIconButton(icon: Icons.chevron_left, onTap: onPrev)),
+        Positioned(right: 10, top: 10, child: RoundIconButton(icon: Icons.chevron_right, onTap: onNext)),
+        Positioned(
+          left: 10,
+          bottom: 10,
+          child: RoundIconButton(icon: Icons.group_add, onTap: onAdd, color: AppColors.red, iconColor: AppColors.white),
+        ),
+        Positioned(right: 10, bottom: 10, child: RoundIconButton(icon: Icons.volume_up, onTap: onSound)),
       ]),
     );
   }
+
+  Gradient? typeGradient(Color color) {
+    return null;
+  }
+}
+
+/// Selector Normal / Mega / Mega X / Mega Y.
+class _FormSelector extends StatelessWidget {
+  const _FormSelector({required this.forms, required this.currentId, required this.onSelect});
+  final List<PokemonForm> forms;
+  final int currentId;
+  final ValueChanged<PokemonForm> onSelect;
+
+  @override
+  Widget build(BuildContext context) => SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        clipBehavior: Clip.none,
+        child: Row(children: [
+          for (final f in forms)
+            Padding(
+              padding: const EdgeInsets.only(right: 8, bottom: 3),
+              child: _FormChip(form: f, selected: f.id == currentId, onTap: () => onSelect(f)),
+            ),
+        ]),
+      );
+}
+
+class _FormChip extends StatelessWidget {
+  const _FormChip({required this.form, required this.selected, required this.onTap});
+  final PokemonForm form;
+  final bool selected;
+  final VoidCallback onTap;
+
+
+  @override
+  Widget build(BuildContext context) {
+    final fg = selected ? AppColors.white : AppColors.ink;
+    return Pressable(
+      onTap: selected ? null : onTap,
+      child: AnimatedContainer(
+        duration: kMedium,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: retroBox(radius: 12, color: selected && !form.isMega ? AppColors.red : AppColors.paper)
+            .copyWith(gradient: selected && form.isMega ? kMegaGradient : null),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(form.isMega ? Icons.auto_awesome : Icons.catching_pokemon, size: 16, color: fg),
+          const SizedBox(width: 6),
+          Text(formLabel(form.name).toUpperCase(), style: AppText.pixel(size: 12, color: fg)),
+        ]),
+      ),
+    );
+  }
+
 }
 
 class _Panel extends StatelessWidget {
@@ -267,45 +354,65 @@ class _Panel extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
         width: double.infinity,
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: AppColors.white,
-          borderRadius: BorderRadius.circular(kRadius),
-          border: Border.all(color: AppColors.ink.withValues(alpha: 0.12)),
-          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 8, offset: const Offset(0, 3))],
-        ),
+        padding: const EdgeInsets.all(14),
+        decoration: retroBox(),
         child: child,
       );
+
 }
 
-class _Info extends StatelessWidget {
-  const _Info(this.d);
+Widget _rule() => Container(
+      height: 2,
+      margin: const EdgeInsets.symmetric(vertical: 12),
+      color: AppColors.ink.withValues(alpha: 0.25),
+    );
+
+Widget _vrule() => VerticalDivider(width: 20, thickness: 2, color: AppColors.ink.withValues(alpha: 0.25));
+
+/// Tarjeta principal: nombre, tipo, descripción, datos y género.
+class _InfoCard extends StatelessWidget {
+  const _InfoCard({required this.d, required this.s});
   final PokemonDetail d;
+  final PokemonSpecies s;
 
   @override
-  Widget build(BuildContext context) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(cap(d.name), style: AppText.title(size: 30)),
-              Text(dex(d.id), style: AppText.pixel(size: 14, color: AppColors.grey)),
+  Widget build(BuildContext context) => _Panel(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(pokeName(d.name), style: AppText.title(size: 28)),
+                Text(
+                  d.isMega ? '${dex(s.id)} · ${formLabel(d.name).toUpperCase()}' : dex(s.id),
+                  style: AppText.pixel(size: 16),
+                ),
+              ]),
+            ),
+            Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              for (final t in d.types)
+                Padding(padding: const EdgeInsets.only(bottom: 6), child: TypeChip(t)),
+            ]),
+          ]),
+          _rule(),
+          Text(
+            s.description.isEmpty ? 'Sin descripción disponible.' : s.description,
+            style: AppText.body(size: 13, weight: FontWeight.w400).copyWith(height: 1.45),
+          ),
+          _rule(),
+          IntrinsicHeight(
+            child: Row(children: [
+              _Fact(Icons.fitness_center, 'PESO', '${d.weightKg} kg'),
+              _vrule(),
+              _Fact(Icons.height, 'ALTURA', '${d.heightM} m'),
+              _vrule(),
+              _Fact(Icons.auto_awesome, 'HABILIDAD', d.abilities.isEmpty ? '—' : cap(d.abilities.first)),
             ]),
           ),
-          Wrap(spacing: 6, runSpacing: 6, alignment: WrapAlignment.end, children: [
-            for (final t in d.types) TypeChip(t),
-          ]),
+          _rule(),
+          GenderRatio(femalePct: s.femalePct),
         ]),
-        Divider(height: 28, thickness: 1.5, color: AppColors.ink.withValues(alpha: 0.12)),
-        IntrinsicHeight(
-          child: Row(children: [
-            _Fact(Icons.monitor_weight_outlined, 'PESO', '${d.weightKg} kg'),
-            VerticalDivider(width: 24, thickness: 1.5, color: AppColors.ink.withValues(alpha: 0.12)),
-            _Fact(Icons.height, 'ALTURA', '${d.heightM} m'),
-          ]),
-        ),
-        Divider(height: 28, thickness: 1.5, color: AppColors.ink.withValues(alpha: 0.12)),
-        Row(children: [_Fact(Icons.auto_awesome, 'HABILIDADES', d.abilities.map(cap).join(', '))]),
-      ]);
+      );
+
 }
 
 class _Fact extends StatelessWidget {
@@ -317,12 +424,12 @@ class _Fact extends StatelessWidget {
   Widget build(BuildContext context) => Expanded(
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
-            Icon(icon, size: 16, color: AppColors.grey),
+            Icon(icon, size: 14, color: AppColors.ink),
             const SizedBox(width: 4),
-            Text(label, style: AppText.pixel(size: 11, color: AppColors.grey)),
+            Flexible(child: Text(label, style: AppText.pixel(size: 11, color: AppColors.grey))),
           ]),
           const SizedBox(height: 4),
-          Text(value, style: AppText.body(size: 16, weight: FontWeight.w800)),
+          Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: AppText.body(size: 14)),
         ]),
       );
 }
@@ -342,43 +449,55 @@ class _Stats extends StatelessWidget {
   final Color color;
 
   @override
-  Widget build(BuildContext context) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('ESTADÍSTICAS BASE', style: AppText.pixel(size: 13, color: AppColors.grey)),
-        const SizedBox(height: 8),
-        for (final e in d.stats.entries)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 5),
-            child: Row(children: [
-              SizedBox(width: 84, child: Text(_statLabels[e.key] ?? e.key, style: AppText.body(size: 13))),
-              SizedBox(width: 36, child: Text('${e.value}', style: AppText.body(size: 13, weight: FontWeight.w800))),
-              Expanded(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: Stack(children: [
-                    Container(height: 8, color: color.withValues(alpha: 0.18)),
-                    FractionallySizedBox(
-                      alignment: Alignment.centerLeft,
-                      widthFactor: (e.value / 255).clamp(0.0, 1.0),
-                      child: Container(height: 8, color: color),
-                    ),
-                  ]),
+  Widget build(BuildContext context) {
+    final total = d.stats.values.fold(0, (a, b) => a + b);
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        Expanded(child: Text('ESTADÍSTICAS BASE', style: AppText.pixel(size: 13, color: AppColors.grey))),
+        Text('TOTAL $total', style: AppText.pixel(size: 13)),
+      ]),
+      const SizedBox(height: 8),
+      for (final e in d.stats.entries)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 5),
+          child: Row(children: [
+            SizedBox(width: 92, child: Text(_statLabels[e.key] ?? e.key, style: AppText.body(size: 12, weight: FontWeight.w400))),
+            SizedBox(width: 36, child: Text('${e.value}', style: AppText.body(size: 12))),
+            Expanded(
+              child: Container(
+                height: 10,
+                clipBehavior: Clip.antiAlias,
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(5),
+                  border: Border.all(color: AppColors.ink, width: 1.5),
+                ),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: FractionallySizedBox(
+                    widthFactor: (e.value / 255).clamp(0.0, 1.0),
+                    heightFactor: 1,
+                    child: ColoredBox(color: color),
+                  ),
                 ),
               ),
-            ]),
-          ),
-      ]);
+            ),
+          ]),
+        ),
+    ]);
+  }
 }
 
 class _Evolution extends StatefulWidget {
-  const _Evolution(this.id);
-  final int id;
+  const _Evolution(this.speciesId);
+  final int speciesId;
   @override
   State<_Evolution> createState() => _EvolutionState();
 }
 
 class _EvolutionState extends State<_Evolution> {
   late final Future<List<PokemonSummary>> _future =
-      context.read<PokemonRepository>().getEvolution(widget.id);
+      context.read<PokemonRepository>().getEvolution(widget.speciesId);
 
   @override
   Widget build(BuildContext context) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -397,8 +516,8 @@ class _EvolutionState extends State<_Evolution> {
               scrollDirection: Axis.horizontal,
               child: Row(children: [
                 for (var i = 0; i < chain.length; i++) ...[
-                  if (i > 0) const Icon(Icons.chevron_right, color: AppColors.grey),
-                  _EvoItem(p: chain[i], current: chain[i].id == widget.id),
+                  if (i > 0) const Icon(Icons.chevron_right, color: AppColors.ink),
+                  _EvoItem(p: chain[i], current: chain[i].id == widget.speciesId),
                 ],
               ]),
             );
@@ -418,16 +537,15 @@ class _EvoItem extends StatelessWidget {
         child: Container(
           width: 84,
           padding: const EdgeInsets.symmetric(vertical: 6),
-          decoration: BoxDecoration(
-            color: current ? AppColors.cream : Colors.transparent,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: current ? AppColors.ink.withValues(alpha: 0.4) : Colors.transparent, width: 1.5),
-          ),
+          decoration: current
+              ? retroBox(color: AppColors.cream, radius: 12, shadow: false)
+              : BoxDecoration(borderRadius: BorderRadius.circular(12)),
           child: Column(children: [
             CachedNetworkImage(imageUrl: spriteUrl(p.id), width: 56, height: 56, filterQuality: FilterQuality.none),
-            Text(cap(p.name), maxLines: 1, overflow: TextOverflow.ellipsis, style: AppText.body(size: 12)),
+            Text(cap(p.name), maxLines: 1, overflow: TextOverflow.ellipsis, style: AppText.body(size: 11)),
             Text(dex(p.id), style: AppText.pixel(size: 10, color: AppColors.grey)),
           ]),
         ),
       );
+
 }

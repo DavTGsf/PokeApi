@@ -8,7 +8,9 @@ class PokedexViewModel extends ChangeNotifier {
   final PokemonRepository _repo;
   static const pageSize = 20;
 
-  List<PokemonSummary> _all = [];
+  List<PokemonSummary> _all = [];   // especies (id < 10000)
+  List<PokemonSummary> _megas = []; // megaevoluciones y primigenias
+  Map<String, int> _idByName = {};
   List<PokemonSummary> _filtered = [];
   final items = <PokemonCard>[];
 
@@ -20,6 +22,7 @@ class PokedexViewModel extends ChangeNotifier {
   String query = '';
   String? type;
   int? generation;
+  bool megaOnly = false;
 
   bool get hasMore => items.length < _filtered.length;
   bool get isEmpty => ready && !loading && error == null && _filtered.isEmpty;
@@ -28,7 +31,10 @@ class PokedexViewModel extends ChangeNotifier {
     error = null;
     notifyListeners();
     try {
-      _all = await _repo.getIndex();
+      final index = await _repo.getIndex();
+      _all = [for (final p in index) if (p.id < 10000) p];
+      _megas = [for (final p in index) if (p.id >= 10000) p];
+      _idByName = {for (final p in _all) p.name: p.id};
       ready = true;
       await _refilter();
     } catch (e) {
@@ -40,6 +46,11 @@ class PokedexViewModel extends ChangeNotifier {
   void setQuery(String v) { query = v; _refilter(); }
   void setType(String? v) { type = v; _refilter(); }
   void setGeneration(int? v) { generation = v; _refilter(); }
+  void setMegaOnly(bool v) { megaOnly = v; _refilter(); }
+
+  /// Número nacional; para una mega se deduce del nombre base.
+  int? _speciesOf(PokemonSummary p) =>
+      p.id < 10000 ? p.id : _idByName[baseName(p.name)];
 
   Future<void> _refilter() async {
     final epoch = ++_epoch;
@@ -48,10 +59,12 @@ class PokedexViewModel extends ChangeNotifier {
       final genIds = generation == null ? null : await _repo.idsByGeneration(generation!);
       if (epoch != _epoch) return;
       final q = query.trim().toLowerCase();
-      _filtered = _all.where((p) {
+      final source = megaOnly ? _megas : _all;
+      _filtered = source.where((p) {
+        final sid = _speciesOf(p);
         if (typeIds != null && !typeIds.contains(p.id)) return false;
-        if (genIds != null && !genIds.contains(p.id)) return false;
-        return q.isEmpty || p.name.contains(q) || p.id.toString() == q;
+        if (genIds != null && !genIds.contains(sid)) return false;
+        return q.isEmpty || p.name.contains(q) || sid.toString() == q;
       }).toList();
       items.clear();
       error = null;

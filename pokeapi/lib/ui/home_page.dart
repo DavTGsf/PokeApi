@@ -16,10 +16,19 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        body: IndexedStack(index: _index, children: _pages), // conserva scroll
-        bottomNavigationBar: _NavBar(
-          index: _index,
-          onChanged: (i) => setState(() => _index = i),
+        backgroundColor: AppColors.red,
+        body: SafeArea(
+          bottom: false,
+          child: Column(children: [
+            const PokedexTopBar(title: 'POKÉDEX'),
+            Expanded(
+              child: ScreenBezel(
+                child: IndexedStack(index: _index, children: _pages), // conserva scroll
+              ),
+            ),
+            _NavBar(index: _index, onChanged: (i) => setState(() => _index = i)),
+            const BottomGrill(),
+          ]),
         ),
       );
 }
@@ -35,29 +44,22 @@ class _NavBar extends StatelessWidget {
   ];
 
   @override
-  Widget build(BuildContext context) => Container(
-        decoration: const BoxDecoration(
-          color: AppColors.red,
-          border: Border(top: BorderSide(color: AppColors.redDark, width: 4)),
-        ),
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-        child: SafeArea(
-          top: false,
-          child: Row(children: [
-            for (var i = 0; i < _items.length; i++)
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                  child: _NavItem(
-                    icon: _items[i].$1,
-                    label: _items[i].$2,
-                    selected: i == index,
-                    onTap: () => onChanged(i),
-                  ),
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+        child: Row(children: [
+          for (var i = 0; i < _items.length; i++)
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: _NavItem(
+                  icon: _items[i].$1,
+                  label: _items[i].$2,
+                  selected: i == index,
+                  onTap: () => onChanged(i),
                 ),
               ),
-          ]),
-        ),
+            ),
+        ]),
       );
 }
 
@@ -73,17 +75,19 @@ class _NavItem extends StatelessWidget {
         onTap: onTap,
         child: AnimatedContainer(
           duration: kMedium,
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          decoration: BoxDecoration(
-            color: selected ? AppColors.cream : AppColors.redDark.withValues(alpha: 0.35),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: selected ? AppColors.ink : Colors.transparent, width: 2),
-          ),
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          decoration: selected
+              ? retroBox(radius: 12)
+              : BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.transparent, width: 2.5),
+                ),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Icon(icon, size: 26, color: selected ? AppColors.red : AppColors.cream),
+            Icon(icon, size: 26, color: selected ? AppColors.red : AppColors.white),
             const SizedBox(height: 2),
-            Text(label, style: AppText.pixel(size: 11, color: selected ? AppColors.ink : AppColors.cream)),
+            Text(label, style: AppText.pixel(size: 12, color: selected ? AppColors.ink : AppColors.white)),
           ]),
         ),
       );
+
 }
